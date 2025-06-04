@@ -1,0 +1,3 @@
+pandas==2.2.*        # for dataframe 
+pytest==8.*          # test runner
+ruff==0.4.*          # lint

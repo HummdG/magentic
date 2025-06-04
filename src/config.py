@@ -1,6 +1,6 @@
 """
 Centralised config so tests & main script share constants.
-Modify here, *never* hard-code inside logic.
+Modify here
 """
 from pathlib import Path
 from datetime import date
@@ -14,8 +14,8 @@ DELIVERY_DIR     = BASE_DIR / "deliver_items"    # folder with daily feeds
 # --- Batch identity ----------------------------------------------------
 BATCH_DATE       = date.today()                  # may be overridden by CLI
 
-# --- Regex pattern (Tier A) -------------------------------------------
+# --- Regex pattern-------------------------------------------
 RX_MATNUM        = re.compile(r"\b\d{4,10}\b")   # 4–10 stand-alone digits
 
 # --- Ingest tuning -----------------------------------------------------
-CHUNK_SIZE       = 1_000_000   # None = load whole file   🡆 adjust per RAM
+CHUNK_SIZE       = None   # None = load whole file   🡆 adjust per RAM:  1_000_000 to stream the ingestion if whole file can't be uploaded
