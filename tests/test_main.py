@@ -26,7 +26,7 @@ def test_process_file(tmp_path: Path):
     config.PRICE_CSV = price_csv
 
     # ---- run main.py ---------------------------------------------------
-    m.process_file(orders_csv, out_dir, chunk_size=None)
+    m.process_file(orders_csv, out_dir, chunk_size=None, price_csv=price_csv)
 
     matched_csv  = out_dir / f"matched_{date.today()}.csv"
     residual_csv = out_dir / f"residual_{date.today()}.csv"

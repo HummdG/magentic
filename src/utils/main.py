@@ -10,7 +10,7 @@ from datetime import date
 import pandas as pd
 
 from .config import (
-    PRICE_CSV, CHUNK_SIZE, RX_MATNUM,
+    CHUNK_SIZE, RX_MATNUM,
 )
 
 # ----------------------------------------------------------------------
@@ -25,9 +25,14 @@ def build_price_index(price_csv: Path):
     return price_df, index
 
 
-def process_file(delivery_csv: Path, out_dir: Path, chunk_size=None):
+def process_file(delivery_csv: Path, out_dir: Path, chunk_size=None, price_csv: Path | None = None):
     """Stream (or fully load) delivery CSV, run regex + dict lookup, write two CSVs."""
-    price_df, price_index = build_price_index(PRICE_CSV)
+
+    if price_csv is None:
+        from . import config
+        price_csv = config.PRICE_CSV
+
+    price_df, price_index = build_price_index(price_csv)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     today = date.today()
