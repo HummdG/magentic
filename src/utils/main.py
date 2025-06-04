@@ -38,33 +38,27 @@ def process_file(delivery_csv: Path, out_dir: Path, chunk_size=None):
     first_chunk = True
 
     if chunk_size is None:
-        reader = [pd.read_csv(          # put the single DataFrame in a list
+        chunks = [pd.read_csv(
             delivery_csv,
-            usecols=...,
-            dtype=...,
+            usecols=["order_id", "order_name", "qty", "ordered_price"],
+            dtype={"order_id": "int64", "order_name": "string",
+                "qty": "int32", "ordered_price": "float32"},
             encoding="utf-8",
-            low_memory=False
+            low_memory=False,
         )]
     else:
-        reader = pd.read_csv(           # iterator of DataFrames
+        chunks = pd.read_csv(
             delivery_csv,
-            usecols=...,
-            dtype=...,
+            usecols=["order_id", "order_name", "qty", "ordered_price"],
+            dtype={"order_id": "int64", "order_name": "string",
+                "qty": "int32", "ordered_price": "float32"},
             encoding="utf-8",
             chunksize=chunk_size,
-            low_memory=False
+            low_memory=False,
         )
 
 
-    for chunk in pd.read_csv(
-        delivery_csv,
-        usecols=["order_id", "order_name", "qty", "ordered_price"],
-        dtype={"order_id": "int64", "order_name": "string",
-               "qty": "int32", "ordered_price": "float32"},
-        encoding="utf-8",
-        chunksize=chunk_size,
-        low_memory=False,
-    ):
+    for chunk in chunks:
         # --- Extract material numbers and match them exactly using regex + dictionary index lookup -----------------
         chunk["matnum_found"] = chunk["order_name"].str.extract(RX_MATNUM, expand=False) # vectorised operations - good for fast matching .str.extract() and .map() - applies fucntion once to whole column - more efficient than for loop
         chunk["pl_idx"] = chunk["matnum_found"].map(price_index, na_action="ignore")
