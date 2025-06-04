@@ -8,6 +8,9 @@ import argparse
 from pathlib import Path
 from datetime import date
 import pandas as pd
+from .models import PriceRow
+from .models import DeliveryRow
+from pydantic import ValidationError, TypeAdapter
 
 from .config import (
     CHUNK_SIZE, RX_MATNUM,
@@ -21,11 +24,20 @@ def build_price_index(price_csv: Path):
         usecols=["material_number", "price"],
         dtype={"material_number": "string", "price": "float32"}, # explictly declaring the types increases RAM efficiency 
     )
+
+    # pydantic validation 
+    try:
+        TypeAdapter(list[PriceRow]).validate_python(price_df.to_dict("records"))
+    except ValidationError as exc:
+        print("❌  Price-list schema errors:")
+        print(exc)
+        raise SystemExit(1)
+
     index = dict(zip(price_df["material_number"].str.strip(), price_df.index))
     return price_df, index
 
 
-def process_file(delivery_csv: Path, out_dir: Path, chunk_size=None, price_csv: Path | None = None):
+def process_file(delivery_csv: Path, out_dir: Path, chunk_size=None, price_csv: Path | None = None, validate_chunks: bool = False):
     """Stream (or fully load) delivery CSV, run regex + dict lookup, write two CSVs."""
 
     if price_csv is None:
@@ -64,6 +76,13 @@ def process_file(delivery_csv: Path, out_dir: Path, chunk_size=None, price_csv: 
 
 
     for chunk in chunks:
+        if validate_chunks:
+            try:
+                TypeAdapter(list[DeliveryRow]).validate_python(chunk.to_dict("records"))
+            except ValidationError as exc:
+                print("❌  Delivery chunk failed validation:")
+                print(exc)
+                raise 
         # --- Extract material numbers and match them exactly using regex + dictionary index lookup -----------------
         chunk["matnum_found"] = chunk["order_name"].str.extract(RX_MATNUM, expand=False) # vectorised operations - good for fast matching .str.extract() and .map() - applies fucntion once to whole column - more efficient than for loop
         chunk["pl_idx"] = chunk["matnum_found"].map(price_index, na_action="ignore")
@@ -102,14 +121,23 @@ def cli():
     
     p.add_argument("--out-dir", default="/data/batch", help="Output folder (will be created)") # Optional argument: output directory for result files (default: /data/batch)
     
-    p.add_argument("--chunk-size", type=int, default=CHUNK_SIZE or 0,
-                   help="Rows per chunk (0 = full file)") # Optional argument: number of rows per chunk; 0 means read the entire file at once
+    p.add_argument("--chunk-size", type=int, default=0,
+                   help="Rows per chunk (0 = read entire file)")
+
+    p.add_argument("--validate-chunks", action="store_true",
+               help="Run Pydantic validation on each delivery chunk") # Optional argument: number of rows per chunk; 0 means read the entire file at once
     
     args = p.parse_args() # Parse the arguments from the command line
     
     chunk_size = None if args.chunk_size == 0 else args.chunk_size # full file 
 
-    process_file(Path(args.input), Path(args.out_dir), chunk_size)
+    process_file(
+        Path(args.input),
+        Path(args.out_dir),
+        chunk_size,
+        price_csv=None,
+        validate_chunks=args.validate_chunks   # ← pass it
+    )
 
 
 if __name__ == "__main__":
