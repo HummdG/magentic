@@ -13,7 +13,7 @@ from .models import DeliveryRow
 from pydantic import ValidationError, TypeAdapter
 
 from .config import (
-    CHUNK_SIZE, RX_MATNUM,
+    RX_MATNUM,
 )
 
 # ----------------------------------------------------------------------
