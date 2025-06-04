@@ -37,6 +37,25 @@ def process_file(delivery_csv: Path, out_dir: Path, chunk_size=None):
     # ensure headers written once
     first_chunk = True
 
+    if chunk_size is None:
+        reader = [pd.read_csv(          # put the single DataFrame in a list
+            delivery_csv,
+            usecols=...,
+            dtype=...,
+            encoding="utf-8",
+            low_memory=False
+        )]
+    else:
+        reader = pd.read_csv(           # iterator of DataFrames
+            delivery_csv,
+            usecols=...,
+            dtype=...,
+            encoding="utf-8",
+            chunksize=chunk_size,
+            low_memory=False
+        )
+
+
     for chunk in pd.read_csv(
         delivery_csv,
         usecols=["order_id", "order_name", "qty", "ordered_price"],
