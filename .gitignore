@@ -1,0 +1,16 @@
+# ── Python artefacts ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.so
+
+# ── Virtual-envs / editors ──────────────────────────────────────────────
+.env/
+.venv/
+venv/
+.DS_Store
+.vscode/
+
+# ── Data & logs (never commit raw feeds) ────────────────────────────────
+data/
+*.csv
+*.log
