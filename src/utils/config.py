@@ -5,9 +5,12 @@ Modify here
 from pathlib import Path
 from datetime import date
 import re
+import os
 
 # --- Paths -------------------------------------------------------------
-BASE_DIR         = Path("/data")                 # docker mount-point
+# If an env-var DATA_DIR is set (Docker), use that,
+# else default to repo-local ./data
+BASE_DIR = Path(os.getenv("DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
 PRICE_CSV        = BASE_DIR / "price_list.csv"   # master list
 DELIVERY_DIR     = BASE_DIR / "deliver_items"    # folder with daily feeds
 
