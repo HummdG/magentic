@@ -1,6 +1,7 @@
 material_number,name,price
 00010001,Bolt M10 × 80,0.15
-00010002,Hex‑nut M6,0.07
+00010002,Hex-nut M6,0.07
 00020001,Washer Ø12,0.03
 00030001,Stainless screw 4×30,0.05
 00040001,Wood screw 5×50,0.06
+00060001,Bolt M12 × 100,0.22

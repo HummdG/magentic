@@ -4,13 +4,20 @@ Example:
     python -m src.utils.main \
         --input /data/deliver_items/delivery_items_2025-06-04.csv
 """
+from __future__ import annotations
+
 import argparse
-from pathlib import Path
+import asyncio
 from datetime import date
+from pathlib import Path
+
 import pandas as pd
-from .models import PriceRow
-from .models import DeliveryRow
-from pydantic import ValidationError, TypeAdapter
+from pydantic import TypeAdapter
+
+from .config import BASE_DIR, CHUNK_SIZE, RX_MATNUM
+from .models import PriceRow, DeliveryRow
+from .vector_stage import shortlist_for_llm
+from .llm_bridge import classify_batches
 
 from .config import (
     RX_MATNUM,
@@ -18,88 +25,92 @@ from .config import (
 
 # ----------------------------------------------------------------------
 def build_price_index(price_csv: Path):
-    """Read price list once & build O(1) lookup."""
+    """Validate price list and return (DataFrame, dict for O(1) look-ups)."""
     price_df = pd.read_csv(
         price_csv,
         usecols=["material_number", "price"],
-        dtype={"material_number": "string", "price": "float32"}, # explictly declaring the types increases RAM efficiency 
+        dtype={"material_number": "string", "price": "float32"},
     )
-
-    # pydantic validation 
-    
+    # bulk Pydantic validation (v2.6-compatible)
     TypeAdapter(list[PriceRow]).validate_python(price_df.to_dict("records"))
-
-
     index = dict(zip(price_df["material_number"].str.strip(), price_df.index))
     return price_df, index
 
 
-def process_file(delivery_csv: Path, out_dir: Path, chunk_size=None, price_csv: Path | None = None, validate_chunks: bool = False):
-    """Stream (or fully load) delivery CSV, run regex + dict lookup, write two CSVs."""
-
-    if price_csv is None:
-        from . import config
-        price_csv = config.PRICE_CSV
-
+# -----------------------------------------------------------------------------
+# Core batch job
+# -----------------------------------------------------------------------------
+def process_file(
+    delivery_csv: Path,
+    out_dir: Path,
+    chunk_size: int | None = None,
+    price_csv: Path | None = None,
+    validate_chunks: bool = False,
+) -> None:
+    """Run full pipeline on a single delivery CSV."""
+    price_csv = price_csv or (BASE_DIR / "price_list.csv")
     price_df, price_index = build_price_index(price_csv)
+
     out_dir.mkdir(parents=True, exist_ok=True)
-
     today = date.today()
-    matched_csv  = out_dir / f"matched_{today}.csv" # matched items in one csv
-    residual_csv = out_dir / f"residual_{today}.csv" # remaining items in other csv
+    matched_csv  = out_dir / f"matched_{today}.csv"
+    residual_csv = out_dir / f"residual_{today}.csv"
 
-    # ensure headers written once
-    first_chunk = True
+    first_chunk   = True
+    residual_buf: list[pd.DataFrame] = []
 
-    if chunk_size is None:
-        chunks = [pd.read_csv(
-            delivery_csv,
-            usecols=["order_id", "order_name", "qty", "ordered_price"],
-            dtype={"order_id": "int64", "order_name": "string",
-                "qty": "int32", "ordered_price": "float32"},
-            encoding="utf-8",
-            low_memory=False,
-        )]
-    else:
-        chunks = pd.read_csv(
-            delivery_csv,
-            usecols=["order_id", "order_name", "qty", "ordered_price"],
-            dtype={"order_id": "int64", "order_name": "string",
-                "qty": "int32", "ordered_price": "float32"},
-            encoding="utf-8",
-            chunksize=chunk_size,
-            low_memory=False,
-        )
+    # pandas reader: single DF if chunk_size is None/0, else iterator
+    reader = pd.read_csv(
+        delivery_csv,
+        usecols=["order_id", "order_name", "qty", "ordered_price"],
+        dtype={"order_id": "int64", "order_name": "string",
+               "qty": "int32", "ordered_price": "float32"},
+        chunksize=chunk_size if chunk_size else None,
+        low_memory=False,
+    )
 
-
-    for chunk in chunks:
+    for chunk in reader:
+        # optional row-level validation
         if validate_chunks:
-            
             TypeAdapter(list[DeliveryRow]).validate_python(chunk.to_dict("records"))
-             
-        # --- Extract material numbers and match them exactly using regex + dictionary index lookup -----------------
-        chunk["matnum_found"] = chunk["order_name"].str.extract(RX_MATNUM, expand=False) # vectorised operations - good for fast matching .str.extract() and .map() - applies fucntion once to whole column - more efficient than for loop
-        chunk["pl_idx"] = chunk["matnum_found"].map(price_index, na_action="ignore")
 
-        matched  = chunk[chunk["pl_idx"].notna()].copy() # Select rows with a valid price list index (i.e. matched entries) notna - not empty therefore match
-        residual = chunk[chunk["pl_idx"].isna()].copy() # Select rows without a price list index (i.e. unmatched or residual entries) isna - empty therefore no match
+        # Tier-A: regex material-number pull + exact dict lookup
+        chunk["matnum_found"] = chunk["order_name"].str.extract(RX_MATNUM, expand=False)
+        chunk["pl_idx"]       = chunk["matnum_found"].map(price_index, na_action="ignore")
 
-        # copy to create new DF making safe edits less memory efficient as you are making a new Df every time but ensure no unexpected behaviour happens
-
+        matched   = chunk[chunk["pl_idx"].notna()].copy()
+        residual  = chunk[chunk["pl_idx"].isna()].copy()
+        residual_buf.append(residual)
 
         if not matched.empty:
-            matched["price_list_price"] = price_df.loc[matched["pl_idx"], "price"].to_numpy() # If there are matched rows, fetch corresponding prices from price_df using pl_idx and assign to new column
+            matched["price_list_price"] = price_df.loc[matched["pl_idx"], "price"].to_numpy()
 
-        # --- Write to output files -------------------------------------------
+        # append to CSV sinks
         matched.to_csv(matched_csv, mode="w" if first_chunk else "a",
                        header=first_chunk, index=False)
         residual.to_csv(residual_csv, mode="w" if first_chunk else "a",
                         header=first_chunk, index=False)
+        first_chunk = False
 
-        first_chunk = False # to not repeat headers
+    # ------------------------------------------------------------------
+    # Vector shortlist + LLM gate for all residual rows
+    # ------------------------------------------------------------------
+    residual_full = pd.concat(residual_buf, ignore_index=True)
+    batches: list[tuple[str, str]] = []           # (delivery_prompt, prices_prompt)
 
+    for order_row, cand_df in shortlist_for_llm(residual_full):
+        d_prompt = f'DELIVERY: "{order_row.order_name}"  price={order_row.ordered_price}'
+        p_prompt = "\n".join(
+            f'{r.material_number}: {r.name}  price={r.price}' for r in cand_df.itertuples()
+        )
+        batches.append((d_prompt, p_prompt))
 
-# ----------------------------------------------------------------------
+    if batches:
+        groups = [batches[i:i + 20] for i in range(0, len(batches), 20)]
+        results = asyncio.run(classify_batches(groups))
+        # TODO: parse `results` JSON and append successful matches to matched_csv
+        print(f"✅  LLM batches sent: {len(groups)}  (rows gated by price delta: {len(batches)})")
+
 def cli():
 
     """Entry point for command-line usage: parses input arguments and initiates the CSV processing pipeline.
