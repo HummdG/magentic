@@ -26,12 +26,9 @@ def build_price_index(price_csv: Path):
     )
 
     # pydantic validation 
-    try:
-        TypeAdapter(list[PriceRow]).validate_python(price_df.to_dict("records"))
-    except ValidationError as exc:
-        print("❌  Price-list schema errors:")
-        print(exc)
-        raise SystemExit(1)
+    
+    TypeAdapter(list[PriceRow]).validate_python(price_df.to_dict("records"))
+
 
     index = dict(zip(price_df["material_number"].str.strip(), price_df.index))
     return price_df, index
@@ -77,12 +74,9 @@ def process_file(delivery_csv: Path, out_dir: Path, chunk_size=None, price_csv: 
 
     for chunk in chunks:
         if validate_chunks:
-            try:
-                TypeAdapter(list[DeliveryRow]).validate_python(chunk.to_dict("records"))
-            except ValidationError as exc:
-                print("❌  Delivery chunk failed validation:")
-                print(exc)
-                raise 
+            
+            TypeAdapter(list[DeliveryRow]).validate_python(chunk.to_dict("records"))
+             
         # --- Extract material numbers and match them exactly using regex + dictionary index lookup -----------------
         chunk["matnum_found"] = chunk["order_name"].str.extract(RX_MATNUM, expand=False) # vectorised operations - good for fast matching .str.extract() and .map() - applies fucntion once to whole column - more efficient than for loop
         chunk["pl_idx"] = chunk["matnum_found"].map(price_index, na_action="ignore")
@@ -90,7 +84,7 @@ def process_file(delivery_csv: Path, out_dir: Path, chunk_size=None, price_csv: 
         matched  = chunk[chunk["pl_idx"].notna()].copy() # Select rows with a valid price list index (i.e. matched entries) notna - not empty therefore match
         residual = chunk[chunk["pl_idx"].isna()].copy() # Select rows without a price list index (i.e. unmatched or residual entries) isna - empty therefore no match
 
-        # copy to create new DF making safe edits less memeory efficient as you are making a new Df every time but ensure no unexpected behaviour happens
+        # copy to create new DF making safe edits less memory efficient as you are making a new Df every time but ensure no unexpected behaviour happens
 
 
         if not matched.empty:
