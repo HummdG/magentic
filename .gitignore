@@ -9,6 +9,7 @@ __pycache__/
 venv/
 .DS_Store
 .vscode/
+.env
 
 # ── Data & logs (never commit raw feeds) ────────────────────────────────
 data/
